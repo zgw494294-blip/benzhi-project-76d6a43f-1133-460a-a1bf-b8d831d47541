@@ -8,6 +8,7 @@ import (
 	"github.com/benzhi-project-76d6a43f-1133-460a-a1bf-b8d831d47541/internal/domain/commissioning"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 )
 
@@ -76,10 +77,11 @@ func (s *Store) Cases() ([]*commissioning.CommissioningCase, error) {
 	}
 	result := make([]*commissioning.CommissioningCase, 0)
 	for _, entry := range entries {
-		if filepath.Ext(entry.Name()) != ".json" || entry.Name() == "idempotency.json" {
+		name := entry.Name()
+		if !isCaseSnapshotFile(name) {
 			continue
 		}
-		id := entry.Name()[:len(entry.Name())-5]
+		id := name[:len(name)-5]
 		b, err := os.ReadFile(s.path(id))
 		if err != nil {
 			return nil, err
@@ -89,15 +91,37 @@ func (s *Store) Cases() ([]*commissioning.CommissioningCase, error) {
 			Case          *commissioning.CommissioningCase `json:"case"`
 		}
 		if err := json.Unmarshal(b, &w); err != nil {
-			return nil, fmt.Errorf("%w: %s", commissioning.ErrStorageCorrupt, entry.Name())
+			return nil, fmt.Errorf("%w: %s", commissioning.ErrStorageCorrupt, name)
 		}
 		if w.SchemaVersion != 1 || w.Case == nil {
-			return nil, fmt.Errorf("%w: %s", commissioning.ErrStorageCorrupt, entry.Name())
+			return nil, fmt.Errorf("%w: %s", commissioning.ErrStorageCorrupt, name)
 		}
 		if w.Case.CaseID != id {
-			return nil, fmt.Errorf("%w: %s", commissioning.ErrStorageCorrupt, entry.Name())
+			return nil, fmt.Errorf("%w: %s", commissioning.ErrStorageCorrupt, name)
 		}
 		result = append(result, w.Case)
 	}
 	return result, nil
+}
+
+// exportSnapshotFilePattern matches the file name produced by ExportSnapshot when
+// the caller does not supply a target, i.e. "<id>-export-<RFC3339-like>.json".
+// These files contain the unwrapped case JSON and must be excluded from listing
+// because Cases() expects the wrapped {schemaVersion, case} envelope.
+var exportSnapshotFilePattern = regexp.MustCompile(`(?s)^.*-export-\d{8}T\d{6}\.\d{9}Z\.json$`)
+
+// isCaseSnapshotFile reports whether name is a case snapshot file readable by
+// Get/Cases: it must be a .json file in the store directory but not the
+// idempotency ledger or a default export snapshot.
+func isCaseSnapshotFile(name string) bool {
+	if filepath.Ext(name) != ".json" {
+		return false
+	}
+	if name == "idempotency.json" {
+		return false
+	}
+	if exportSnapshotFilePattern.MatchString(name) {
+		return false
+	}
+	return true
 }
