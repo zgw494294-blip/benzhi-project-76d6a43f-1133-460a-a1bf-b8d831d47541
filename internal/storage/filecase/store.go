@@ -60,17 +60,21 @@ func (s *Store) SaveWithFingerprint(c *commissioning.CommissioningCase, key, fin
 	if e != nil {
 		return e
 	}
-	if key != "" {
-		s.idem[key] = application.IdempotentResult{Status: 200, Body: b, Fingerprint: fingerprint}
-		ib, _ := json.Marshal(s.idem)
-		_ = os.WriteFile(filepath.Join(s.dir, "idempotency.json"), ib, 0644)
-	}
+	// Persist the canonical case snapshot first. The idempotency record may
+	// only be committed once the authoritative archive is durable; otherwise a
+	// write failure would leave a cached snapshot that does not match the
+	// persisted case, causing retries to replay an uncommitted state.
 	tmp := s.path(c.CaseID) + ".tmp"
 	if e = os.WriteFile(tmp, b, 0644); e != nil {
 		return e
 	}
 	if e = os.Rename(tmp, s.path(c.CaseID)); e != nil {
 		return e
+	}
+	if key != "" {
+		s.idem[key] = application.IdempotentResult{Status: 200, Body: b, Fingerprint: fingerprint}
+		ib, _ := json.Marshal(s.idem)
+		_ = os.WriteFile(filepath.Join(s.dir, "idempotency.json"), ib, 0644)
 	}
 	return s.appendAudit(c)
 }
