@@ -60,19 +60,51 @@ func (s *Store) SaveWithFingerprint(c *commissioning.CommissioningCase, key, fin
 	if e != nil {
 		return e
 	}
-	tmp := s.path(c.CaseID) + ".tmp"
+	casePath := s.path(c.CaseID)
+	// Capture the prior snapshot (if any) so it can be restored when a later
+	// step fails; otherwise a failed Save would leave the new state visible
+	// to Store.Get even though the caller received an error.
+	prevSnapshot, prevSnapshotErr := os.ReadFile(casePath)
+	prevExists := prevSnapshotErr == nil
+	tmp := casePath + ".tmp"
 	if e = os.WriteFile(tmp, b, 0644); e != nil {
 		return e
 	}
-	if e = os.Rename(tmp, s.path(c.CaseID)); e != nil {
+	if e = os.Rename(tmp, casePath); e != nil {
+		return e
+	}
+	// Remember the prior idempotency entry so it can be restored on failure.
+	var prevIdem application.IdempotentResult
+	hadIdem := false
+	if key != "" {
+		if r, ok := s.idem[key]; ok {
+			prevIdem = r
+			hadIdem = true
+		}
+		s.idem[key] = application.IdempotentResult{Status: 200, Body: b, Fingerprint: fingerprint}
+	}
+	if e = s.appendAudit(c); e != nil {
+		// Roll back to the pre-save state so a failed Save does not publish
+		// or retain a snapshot/idempotency entry that Store.Get would surface.
+		if prevExists {
+			_ = os.WriteFile(casePath, prevSnapshot, 0644)
+		} else {
+			_ = os.Remove(casePath)
+		}
+		if key != "" {
+			if hadIdem {
+				s.idem[key] = prevIdem
+			} else {
+				delete(s.idem, key)
+			}
+		}
 		return e
 	}
 	if key != "" {
-		s.idem[key] = application.IdempotentResult{Status: 200, Body: b, Fingerprint: fingerprint}
 		ib, _ := json.Marshal(s.idem)
 		_ = os.WriteFile(filepath.Join(s.dir, "idempotency.json"), ib, 0644)
 	}
-	return s.appendAudit(c)
+	return nil
 }
 func (s *Store) appendAudit(c *commissioning.CommissioningCase) error {
 	f, e := os.OpenFile(filepath.Join(s.dir, c.CaseID+".audit.jsonl"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
