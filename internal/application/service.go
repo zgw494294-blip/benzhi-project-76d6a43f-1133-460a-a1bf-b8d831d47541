@@ -51,8 +51,11 @@ func (s *Service) mutate(id, key string, expected int64, fn func(*commissioning.
 	if e = s.repo.Save(c, storeKey); e != nil {
 		return nil, e
 	}
+	// The case version advanced, so any cached review package is now stale.
+	s.reviewPackages.Delete(id)
 	return c, nil
 }
+
 func (s *Service) Create(zone, cat, owner, key string) (*commissioning.CommissioningCase, error) {
 	zone, cat, owner = commissioning.NormalizeIdentity(zone, cat, owner)
 	fingerprint := identityFingerprint(zone, cat, owner)
@@ -160,6 +163,7 @@ func (s *Service) ObserveBatch(id, key string, expected int64, observations []co
 		if err := saver.SaveWithFingerprint(c, storeKey, fingerprint); err != nil {
 			return nil, err
 		}
+		s.reviewPackages.Delete(id)
 		return c, nil
 	}
 	if err := s.repo.Save(c, storeKey); err != nil {
@@ -175,6 +179,7 @@ func (s *Service) ObserveBatch(id, key string, expected int64, observations []co
 			return nil, err
 		}
 	}
+	s.reviewPackages.Delete(id)
 	return c, nil
 }
 func (s *Service) Remediate(id, key string, expected int64, in RemediationInput) (*commissioning.CommissioningCase, error) {
@@ -196,6 +201,13 @@ func (s *Service) ReviewPackage(id string) (commissioning.ReviewPackage, error) 
 	if cached, ok := s.reviewPackages.Load(id); ok {
 		return cached.(commissioning.ReviewPackage), nil
 	}
+	// Build the package under the per-case mutation lock so that a concurrent
+	// mutation cannot persist a new version (and invalidate the cache) between
+	// the cache miss and the Store below, which would otherwise re-introduce a
+	// stale package.
+	m := s.lock(id)
+	m.Lock()
+	defer m.Unlock()
 	c, err := s.repo.Get(id)
 	if err != nil {
 		return commissioning.ReviewPackage{}, err
@@ -203,6 +215,11 @@ func (s *Service) ReviewPackage(id string) (commissioning.ReviewPackage, error) 
 	pkg, err := c.BuildReviewPackage()
 	if err != nil {
 		return commissioning.ReviewPackage{}, err
+	}
+	// Re-check the cache: a mutation that completed while we were waiting on
+	// the lock already invalidated and may have rebuilt it with fresh data.
+	if fresh, ok := s.reviewPackages.Load(id); ok {
+		return fresh.(commissioning.ReviewPackage), nil
 	}
 	s.reviewPackages.Store(id, pkg)
 	return pkg, nil
