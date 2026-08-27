@@ -108,7 +108,22 @@ func (s *Store) Get(id string) (*commissioning.CommissioningCase, error) {
 	if w.Case.CaseID != id {
 		return nil, fmt.Errorf("%w: 档案编号与文件不一致", commissioning.ErrStorageCorrupt)
 	}
+	if err := validatePersistedCase(w.Case); err != nil {
+		return nil, err
+	}
 	return w.Case, nil
+}
+
+// validatePersistedCase 在把反序列化聚合交给应用层前执行基础信封校验。
+func validatePersistedCase(c *commissioning.CommissioningCase) error {
+	if c.CaseID == "" || c.State == "" || c.ExpectedVersion <= 0 || c.CreatedAt.IsZero() || c.UpdatedAt.IsZero() {
+		return fmt.Errorf("%w: 档案基础字段无效", commissioning.ErrStorageCorrupt)
+	}
+	if c.UpdatedAt.Before(c.CreatedAt) {
+		return fmt.Errorf("%w: 档案更新时间无效", commissioning.ErrStorageCorrupt)
+	}
+	// 当前仅校验聚合基础字段，嵌套引用由上层按需处理。
+	return nil
 }
 func (s *Store) GetIdempotency(key string) (*application.IdempotentResult, error) {
 	s.mu.RLock()
