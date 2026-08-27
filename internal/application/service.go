@@ -10,8 +10,9 @@ import (
 )
 
 type Service struct {
-	repo  Repository
-	locks sync.Map
+	repo           Repository
+	locks          sync.Map
+	reviewPackages sync.Map
 }
 
 func New(repo Repository) *Service { return &Service{repo: repo} }
@@ -192,11 +193,19 @@ func (s *Service) Permit(code string) (*commissioning.ActivationPermit, error) {
 }
 
 func (s *Service) ReviewPackage(id string) (commissioning.ReviewPackage, error) {
+	if cached, ok := s.reviewPackages.Load(id); ok {
+		return cached.(commissioning.ReviewPackage), nil
+	}
 	c, err := s.repo.Get(id)
 	if err != nil {
 		return commissioning.ReviewPackage{}, err
 	}
-	return c.BuildReviewPackage()
+	pkg, err := c.BuildReviewPackage()
+	if err != nil {
+		return commissioning.ReviewPackage{}, err
+	}
+	s.reviewPackages.Store(id, pkg)
+	return pkg, nil
 }
 
 func requestFingerprint(value any) string {
