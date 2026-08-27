@@ -12,16 +12,21 @@ import (
 )
 
 type Store struct {
-	dir  string
-	mu   sync.RWMutex
-	idem map[string]application.IdempotentResult
+	dir   string
+	mu    sync.RWMutex
+	idem  map[string]application.IdempotentResult
+	cases map[string]*commissioning.CommissioningCase
 }
 
 func New(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
-	s := &Store{dir: dir, idem: map[string]application.IdempotentResult{}}
+	s := &Store{
+		dir:   dir,
+		idem:  map[string]application.IdempotentResult{},
+		cases: map[string]*commissioning.CommissioningCase{},
+	}
 	if b, e := os.ReadFile(filepath.Join(dir, "idempotency.json")); e == nil {
 		json.Unmarshal(b, &s.idem)
 	}
@@ -86,8 +91,11 @@ func (s *Store) appendAudit(c *commissioning.CommissioningCase) error {
 	return e
 }
 func (s *Store) Get(id string) (*commissioning.CommissioningCase, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cached, ok := s.cases[id]; ok {
+		return cached, nil
+	}
 	b, e := os.ReadFile(s.path(id))
 	if os.IsNotExist(e) {
 		return nil, commissioning.ErrNotFound
@@ -108,6 +116,7 @@ func (s *Store) Get(id string) (*commissioning.CommissioningCase, error) {
 	if w.Case.CaseID != id {
 		return nil, fmt.Errorf("%w: 档案编号与文件不一致", commissioning.ErrStorageCorrupt)
 	}
+	s.cases[id] = w.Case
 	return w.Case, nil
 }
 func (s *Store) GetIdempotency(key string) (*application.IdempotentResult, error) {
