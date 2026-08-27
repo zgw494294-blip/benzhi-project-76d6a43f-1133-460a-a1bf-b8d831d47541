@@ -1,0 +1,35 @@
+{
+  "contract_version": "project-refill-model-contract-v5",
+  "build_command": {
+    "argv": ["go", "build", "./..."],
+    "working_directory": "."
+  },
+  "startup_command": {
+    "argv": ["go", "run", "./cmd/chamberd", "-selfcheck", "-selfcheck-timeout=8s", "-addr=127.0.0.1:19081"],
+    "working_directory": "."
+  },
+  "smoke_command": {
+    "argv": ["go", "run", "./cmd/chamberd", "-selfcheck", "-selfcheck-timeout=8s", "-addr=127.0.0.1:19081"],
+    "working_directory": "."
+  },
+  "regression_commands": [
+    {
+      "argv": ["go", "test", "./..."],
+      "working_directory": "."
+    },
+    {
+      "argv": ["go", "run", "./cmd/chamberd", "-selfcheck", "-selfcheck-timeout=8s", "-addr=127.0.0.1:19081"],
+      "working_directory": "."
+    }
+  ],
+  "blocking_issues": [],
+  "observations": [
+    "已完整静态阅读 go.mod、README.md、cmd/chamberd 入口，以及 internal/httpapi、internal/application、internal/domain/commissioning、internal/storage/filecase 的构建、启动、自检、公开路由和持久化链路；未发现会必然导致项目无法编译、无法启动、自检失败、回归命令失败或公开入口无法加载的阻断问题。",
+    "cmd/chamberd 默认监听 127.0.0.1:19081，支持 -addr 和 PORT；BuildReport 的启动命令进入 -selfcheck 有界生命周期，并通过公开 HTTP 路由完成建档、基线锁定、方案提交、开始试运行、观测、复核、启用和许可验证后关闭服务。",
+    "新增的试运行观测批量登记已由 POST /api/v1/commissioning-cases/{caseId}/observations/batch 公开可达，依次进入 HTTP 解码、应用层档案锁与版本/幂等指纹检查、领域副本批次校验和规则评估，再由文件存储一次保存快照并追加最终状态审计事件；失败批次在领域副本上丢弃。",
+    "新增的偏差台账已由 GET /api/v1/commissioning-cases/{caseId}/deviations 公开可达，包含 status、ruleCode、severity、来源观测时间窗口、page、pageSize 参数解析，并对档案、来源观测、状态、解决字段和替代链执行一致性检查，结果按观测时间与偏差编号稳定排序，返回分页、总数、状态计数及 canRemediate。",
+    "新增的启用许可批量核验已由 POST /api/v1/permits/validation 公开可达，限制 1 至 100 个编号，执行去空白、空值与重复校验，按请求顺序逐项复用许可查找和档案绑定核验，返回 active、expired、not_found、error 明细及汇总；存储损坏或绑定不一致会中止整批响应。",
+    "根目录 README.md 使用简体中文；本项目不是 web_ui，未要求浏览器页面入口；源码树中未发现 BUG_REPRO.md。",
+    "本阶段只进行了静态检查，未执行 go build、go test、go run、Docker 或其他机械门禁命令；最终机械可运行性以服务后续独立执行结果为准。"
+  ]
+}
